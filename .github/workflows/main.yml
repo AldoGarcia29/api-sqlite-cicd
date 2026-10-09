@@ -64,7 +64,7 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME }}/api-sqlite-cicd:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/api-sqlite-cicd:${{ github.sha }}
 
-  ssh-check:
+    ssh-check:
     name: Comprobar conexion con EC2
     needs: build-and-push
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -72,19 +72,43 @@ jobs:
 
     steps:
       - name: Verificar SSH y API
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          fingerprint: ${{ secrets.EC2_FINGERPRINT }}
-          port: 22
-          timeout: 30s
-          command_timeout: 2m
-          script: |
-            set -eu
-            whoami
-            sudo -n docker --version
-            curl --fail --silent --show-error http://127.0.0.1/api/salud
-            echo
-            echo "Conexion SSH y API verificadas"
+        shell: bash
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_FINGERPRINT: ${{ secrets.EC2_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          SSH_DIR=$(mktemp -d)
+          trap 'rm -rf "$SSH_DIR"' EXIT
+
+          printf '%s\n' "$EC2_SSH_KEY" | tr -d '\r' > "$SSH_DIR/key.pem"
+          chmod 600 "$SSH_DIR/key.pem"
+
+          ssh-keyscan -T 15 -t ed25519 "$EC2_HOST" \
+            > "$SSH_DIR/known_hosts" 2>/dev/null
+
+          ACTUAL=$(ssh-keygen -lf "$SSH_DIR/known_hosts" -E sha256 | awk '{print $2}')
+          EXPECTED=$(printf '%s' "$EC2_FINGERPRINT" | tr -d '\r\n')
+
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "La huella ED25519 no coincide con el Secret."
+            exit 1
+          fi
+
+          ssh \
+            -i "$SSH_DIR/key.pem" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o ConnectTimeout=20 \
+            -o HostKeyAlgorithms=ssh-ed25519 \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$SSH_DIR/known_hosts" \
+            "$EC2_USER@$EC2_HOST" 'bash -se' <<'REMOTE'
+          whoami
+          sudo -n docker --version
+          curl --fail --silent --show-error http://127.0.0.1/api/salud
+          echo
+          echo "Conexion SSH y API verificadas"
+          REMOTE
