@@ -1,0 +1,42 @@
+const request = require('supertest');
+const { createDatabase } = require('../src/database');
+const { createApp } = require('../src/app');
+let db, app, id;
+const user = {nombre:'Aldo García',correo:'aldo@mail.com',edad:21};
+beforeEach(async () => {
+  db = createDatabase(); app = createApp(db);
+  id = (await request(app).post('/api/usuarios').send(user)).body.id;
+});
+afterEach(() => db.close());
+describe('Integración: 12 endpoints con Express + SQLite real en memoria', () => {
+  test('GET salud: 200', async () => { const r = await request(app).get('/api/salud'); expect(r.status).toBe(200); expect(r.body.estado).toBe('OK'); });
+  test('GET lista: incluye usuario', async () => { const r = await request(app).get('/api/usuarios'); expect(r.status).toBe(200); expect(r.body).toHaveLength(1); });
+  test('GET por ID: devuelve usuario', async () => { const r = await request(app).get(`/api/usuarios/${id}`); expect(r.status).toBe(200); expect(r.body.correo).toBe(user.correo); });
+  test('GET buscar: encuentra por nombre', async () => { const r = await request(app).get('/api/usuarios/buscar?nombre=Aldo'); expect(r.status).toBe(200); expect(r.body).toHaveLength(1); });
+  test('GET activos: excluye desactivados', async () => { await request(app).patch(`/api/usuarios/${id}/desactivar`); const r = await request(app).get('/api/usuarios/activos'); expect(r.status).toBe(200); expect(r.body).toEqual([]); });
+  test('GET estadísticas: cuenta usuarios', async () => { const r = await request(app).get('/api/usuarios/estadisticas'); expect(r.status).toBe(200); expect(r.body).toEqual({total:1,activos:1}); });
+  test('POST: crea y persiste', async () => { const r = await request(app).post('/api/usuarios').send({...user,correo:'nuevo@mail.com'}); expect(r.status).toBe(201); expect(db.prepare('SELECT correo FROM usuarios WHERE id=?').get(r.body.id).correo).toBe('nuevo@mail.com'); });
+  test('PUT: actualiza todos los campos', async () => { const r = await request(app).put(`/api/usuarios/${id}`).send({nombre:'Maite',correo:'maite@mail.com',edad:22}); expect(r.status).toBe(200); expect((await request(app).get(`/api/usuarios/${id}`)).body.nombre).toBe('Maite'); });
+  test('PATCH: cambia edad y conserva correo', async () => { const r = await request(app).patch(`/api/usuarios/${id}`).send({edad:22}); expect(r.status).toBe(200); expect(r.body.edad).toBe(22); expect(r.body.correo).toBe(user.correo); });
+  test('PATCH activar: activa usuario', async () => { await request(app).patch(`/api/usuarios/${id}/desactivar`); const r = await request(app).patch(`/api/usuarios/${id}/activar`); expect(r.status).toBe(200); expect(r.body.activo).toBe(1); });
+  test('PATCH desactivar: desactiva usuario', async () => { const r = await request(app).patch(`/api/usuarios/${id}/desactivar`); expect(r.status).toBe(200); expect(r.body.activo).toBe(0); });
+  test('DELETE: elimina y luego responde 404', async () => { const r = await request(app).delete(`/api/usuarios/${id}`); expect(r.status).toBe(204); expect((await request(app).get(`/api/usuarios/${id}`)).status).toBe(404); });
+});
+describe('Escenarios de fallos al consumir la API', () => {
+  test.each(['get','put','patch','delete'])('%s: ID inválido 400', async method => { expect((await request(app)[method]('/api/usuarios/abc').send(user)).status).toBe(400); });
+  test.each(['get','put','patch','delete'])('%s: usuario inexistente 404', async method => { expect((await request(app)[method]('/api/usuarios/999').send(user)).status).toBe(404); });
+  test.each(['activar','desactivar'])('PATCH %s: ID inválido e inexistente', async action => { expect((await request(app).patch(`/api/usuarios/abc/${action}`)).status).toBe(400); expect((await request(app).patch(`/api/usuarios/999/${action}`)).status).toBe(404); });
+  test.each([{nombre:'Aldo',edad:21}, {...user,correo:'invalido'}, {...user,edad:-1}, {...user,edad:'21'}, {...user,nombre:''}, {...user,rol:'admin'}, []])('POST: cuerpo inválido %#', async body => { expect((await request(app).post('/api/usuarios').send(body)).status).toBe(400); expect(db.prepare('SELECT COUNT(*) AS n FROM usuarios').get().n).toBe(1); });
+  test('POST: correo duplicado 409', async () => { expect((await request(app).post('/api/usuarios').send({...user,correo:'ALDO@mail.com'})).status).toBe(409); });
+  test('PUT: faltan campos 400 y no modifica datos', async () => { expect((await request(app).put(`/api/usuarios/${id}`).send({nombre:'Maite'})).status).toBe(400); expect((await request(app).get(`/api/usuarios/${id}`)).body.nombre).toBe(user.nombre); });
+  test.each([{}, {edad:0}, {activo:0}])('PATCH inválido %#: 400', async body => { expect((await request(app).patch(`/api/usuarios/${id}`).send(body)).status).toBe(400); });
+  test.each(['put','patch'])('%s correo duplicado: 409 y sin cambios', async method => { await request(app).post('/api/usuarios').send({...user,correo:'otro@mail.com'}); const body = method === 'put' ? {...user,correo:'otro@mail.com'} : {correo:'otro@mail.com'}; expect((await request(app)[method](`/api/usuarios/${id}`).send(body)).status).toBe(409); expect((await request(app).get(`/api/usuarios/${id}`)).body.correo).toBe(user.correo); });
+  test('GET buscar: falta parámetro 400', async () => expect((await request(app).get('/api/usuarios/buscar')).status).toBe(400));
+  test('GET buscar: sin coincidencias 200 y lista vacía', async () => { const r = await request(app).get('/api/usuarios/buscar?nombre=Desconocido'); expect(r.status).toBe(200); expect(r.body).toEqual([]); });
+  test('GET buscar: entrada SQL se trata como texto', async () => { const r = await request(app).get('/api/usuarios/buscar').query({nombre:"' OR 1=1 --"}); expect(r.status).toBe(200); expect(r.body).toEqual([]); });
+  test('POST JSON mal formado: 400', async () => expect((await request(app).post('/api/usuarios').set('Content-Type','application/json').send('{"nombre":')).status).toBe(400));
+  test('POST cuerpo demasiado grande: 413', async () => expect((await request(app).post('/api/usuarios').send({nombre:'x'.repeat(20000)})).status).toBe(413));
+  test('Ruta desconocida: 404', async () => expect((await request(app).get('/api/no-existe')).status).toBe(404));
+  test('Lista y estadísticas con base vacía', async () => { db.exec('DELETE FROM usuarios'); expect((await request(app).get('/api/usuarios')).body).toEqual([]); expect((await request(app).get('/api/usuarios/estadisticas')).body).toEqual({total:0,activos:0}); });
+  test('Fallo interno: 500 sin detalles SQL', async () => { db.exec('DROP TABLE usuarios'); const r = await request(app).get('/api/usuarios'); expect(r.status).toBe(500); expect(r.body).toEqual({error:'Error interno del servidor'}); });
+});

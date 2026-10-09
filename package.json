@@ -1,0 +1,42 @@
+{
+    "name": "actividad-endpoints-sqlite",
+    "version": "1.0.0",
+    "private": true,
+    "engines": {
+        "node": ">=24"
+    },
+    "scripts": {
+        "start": "node src/server.js",
+        "test": "jest --runInBand --verbose",
+        "coverage": "jest --runInBand --coverage"
+    },
+    "dependencies": {
+        "express": "5.2.1"
+    },
+    "devDependencies": {
+        "jest": "30.2.0",
+        "supertest": "7.2.2"
+    },
+    "jest": {
+  "testEnvironment": "node",
+  "collectCoverageFrom": [
+    "src/service.js",
+    "src/app.js",
+    "src/database.js"
+  ],
+  "coverageDirectory": "coverage",
+  "coverageReporters": [
+    "text",
+    "html",
+    "lcov"
+  ],
+  "coverageThreshold": {
+    "global": {
+      "statements": 70,
+      "branches": 70,
+      "functions": 70,
+      "lines": 70
+    }
+  }
+}
+}
