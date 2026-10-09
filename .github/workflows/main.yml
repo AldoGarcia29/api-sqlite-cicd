@@ -64,7 +64,7 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME }}/api-sqlite-cicd:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/api-sqlite-cicd:${{ github.sha }}
 
-    ssh-check:
+  ssh-check:
     name: Comprobar conexion con EC2
     needs: build-and-push
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
