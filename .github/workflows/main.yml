@@ -63,3 +63,28 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/api-sqlite-cicd:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/api-sqlite-cicd:${{ github.sha }}
+
+    ssh-check:
+    name: Comprobar conexion con EC2
+    needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Verificar SSH y API
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          fingerprint: ${{ secrets.EC2_FINGERPRINT }}
+          port: 22
+          timeout: 30s
+          command_timeout: 2m
+          script: |
+            set -eu
+            whoami
+            sudo -n docker --version
+            curl --fail --silent --show-error http://127.0.0.1/api/salud
+            echo
+            echo "Conexion SSH y API verificadas"
