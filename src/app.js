@@ -31,7 +31,7 @@ function createApp(db) {
       res,
       200,
       { estado: 'OK' },
-      'Prueba final'
+      'Prueba del maesttro 2'
     );
   });
 
