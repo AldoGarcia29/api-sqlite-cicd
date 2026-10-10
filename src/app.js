@@ -31,7 +31,7 @@ function createApp(db) {
       res,
       200,
       { estado: 'OK' },
-      'Despliegue automatico funcionando prueba 3'
+      'Prueba final'
     );
   });
 
